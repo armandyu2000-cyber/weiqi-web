@@ -75,7 +75,8 @@ chmod +x macos/install_macos.command
 ./macos/install_macos.command
 ```
 
-第一次跑会下 136MB 的模型（进度会打百分号），跑完装到 **`~/Applications/围棋.app`**。
+第一次跑要下约 180MB（两个模型 136MB + 三段自然音 43MB，进度会打百分号），
+跑完装到 **`~/Applications/围棋.app`**。
 
 如果它报「找不到 katago」，说明 brew 装的位置不在脚本找的那两个目录里，把
 `which katago` 的输出发我。

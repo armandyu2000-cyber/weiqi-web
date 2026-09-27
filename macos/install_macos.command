@@ -15,7 +15,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PROJECT="$(cd "$HERE/.." && pwd)"
 APP_NAME="围棋"
-BUNDLE_ID="local.thoma.go"
+BUNDLE_ID="local.weiqi-web"
 
 # 装在 ~/Applications 而不是项目目录里，这一步是有讲究的：
 # .app 里面有指向项目目录的软链，要是 .app 本身也在项目目录里，就成环了
@@ -52,7 +52,7 @@ say "Python  ：$PY  ($("$PY" -V 2>&1))"
 # --- 2. 下模型和配置（已经下过就跳过）---------------------------------------
 
 say ""
-say "下载模型和配置文件（第一次要下 136MB）……"
+say "下载模型、配置和内置自然音（第一次要下约 180MB）……"
 ( cd "$PROJECT" && "$PY" setup.py ) || die "setup.py 没跑通，看上面的报错"
 
 # --- 3. 拼 .app -------------------------------------------------------------
