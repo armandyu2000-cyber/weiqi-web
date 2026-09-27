@@ -53,15 +53,18 @@ python3 -V
 > 纯 CPU 的 Eigen）我在这边没法确认。如果是纯 CPU，每手可能要十几秒。真是那样的话
 > 告诉我，我把 `maxVisits` 调低或者换个更小的模型。
 
-## 第 3 步：把项目拷到 Mac
+## 第 3 步：拿代码
 
-整个 `Go` 文件夹拷过去。**建议连 `vendor/models/` 一起拷**（两个模型共 136MB）——
-拷过去的话第 4 步的下载会自动跳过；不拷也行，它会自己下。
+```bash
+git clone https://github.com/armandyu2000-cyber/weiqi-web.git
+cd weiqi-web
+```
 
-可以不拷的：`vendor/engines/`（那是 Windows 的 50MB 二进制，Mac 上用不上）、
-`__pycache__/`、`gtp_logs/`。
+只有几百 KB —— 引擎、模型和内置自然音（约 180MB）都不在仓库里，第 4 步会现下。
 
-拷贝方式随意：移动硬盘、`scp -r`、rsync 都行。
+> 也可以整个文件夹拷过来（移动硬盘、`scp -r`、rsync 都行）。那样的话**建议连
+> `vendor/models/` 一起拷**（两个模型共 136MB），第 4 步的下载会自动跳过。
+> `vendor/engines/` 不用拷 —— 那是 Windows 的 50MB 二进制，Mac 上用不上。
 
 > AirDrop 或浏览器下载会给文件打上隔离标记，第一次双击可能被 Gatekeeper 拦。
 > 见下面「出问题」一节。
