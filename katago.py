@@ -32,6 +32,9 @@ ENGINES = {
 ENGINE = "macos" if IS_MAC else "directml"
 
 CONFIG_NAME = "gtp_human5k_example.cfg"
+# 随源码走的那份配置。Windows 上解压引擎包时会顺带带出一份同名的，
+# 那份优先；Mac 上没有引擎包，就退回这里。
+CONFIG_DIR = Path(__file__).resolve().parent / "configs"
 
 # 业余档位：级位 9 级 → 1 级，段位 1 段 → 9 段，共 18 档。
 # 档位名就是 humanSL 的 rank 后缀，rank_9k / rank_9d 这样。
@@ -98,9 +101,11 @@ def engine_paths(engine=None):
     可执行文件先在 vendor/engines/<后端>/ 里找，找不到退回 PATH —— Mac 上的
     katago 是 brew 装的，只会出现在 PATH 上。
 
-    配置文件则必须在 vendor 里：brew 那个包只给一个二进制，不带
-    gtp_human5k_example.cfg，那份得 setup.py 单独下（它才带 humanSLProfile、
-    delayMove 这些关键设置）。
+    配置文件同样是两处找：先看 vendor（Windows 解压引擎包时带出来的），
+    再退回仓库自带的 configs/。**不再靠下载** —— 这份 12KB 的文本带着
+    humanSLProfile、delayMove、maxVisits 这些关键设置，程序行为全指着它，
+    让它的可得性依赖一条外部 URL 不值得。而且 KataGo 官方发在
+    raw.githubusercontent.com 上的那份，国内网络经常连不上。
     """
     engine = engine or ENGINE
     spec = ENGINES.get(engine)
@@ -119,7 +124,10 @@ def engine_paths(engine=None):
 
     config = folder / CONFIG_NAME
     if not config.exists():
-        raise FileNotFoundError(f"找不到配置 {config}。先跑 python setup.py")
+        config = CONFIG_DIR / CONFIG_NAME
+    if not config.exists():
+        raise FileNotFoundError(
+            f"找不到配置 {CONFIG_NAME}（vendor 和 configs/ 都没有）。")
     return exe, config
 
 

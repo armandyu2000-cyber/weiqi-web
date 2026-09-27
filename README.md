@@ -279,7 +279,8 @@ Windows 上 **OpenCL 后端是坏的**：一搜索就 `CL_OUT_OF_RESOURCES`，�
 macOS 上没有 DirectML 的对应物，而且 KataGo 官方不发 macOS 预编译包，只能
 `brew install katago`——所以那一项的可执行文件不在 `vendor/` 里，`engine_paths()`
 会去 PATH 上找（`vendor` 里有就优先用 `vendor` 的，方便自己编一份放进去）。
-配置文件则必须下，见 `setup.py` 的 `MAC_DOWNLOADS`。
+配置文件不用下 —— brew 那个包只给一个二进制、不带 `gtp_human5k_example.cfg`，
+所以那份**随源码走**，在 `configs/` 里，`engine_paths()` 会退回去找。
 
 线程数**保持配置里的 1**，别调大：实测 DirectML 下 8 线程反而更慢（6.3 秒），
 加线程只是让 GPU 设备互相抢。而且线程数不影响强度——强度由档位决定。
@@ -290,6 +291,7 @@ macOS 上没有 DirectML 的对应物，而且 KataGo 官方不发 macOS 预编�
 
 ```
 setup.py            下载引擎、两个模型和内置自然音，可重复执行（大小对就跳过）
+configs/            引擎的 GTP 配置，随源码走（12KB 文本，不用下）
 server.py           本地 HTTP 服务 + 对局状态，入口就是它
 rules.py            围棋规则：气 / 提子 / 自杀 / 劫 / 数子
 katago.py           GTP 客户端（子进程 + stdin/stdout）
@@ -354,13 +356,20 @@ nature/             自然音；不存在时由程序从 vendor/sounds/ 铺一�
 
 本项目用 **MIT**，见 [`LICENSE`](LICENSE)。
 
-引擎、模型、声音都不在这个仓库里 —— `setup.py` 运行时去官方地址下载，各自许可见下：
+引擎、模型和声音都不在这个仓库里，`setup.py` 运行时去官方地址下载；只有那份 GTP
+配置随源码走。各自许可见下：
 
-| 东西 | 来源 | 许可 |
-|---|---|---|
-| KataGo 引擎（DirectML / Eigen 版） | [lightvector/KataGo](https://github.com/lightvector/KataGo) | MIT |
-| 两个神经网络 | [katagotraining.org](https://katagotraining.org/) / [katagoarchive.org](https://katagoarchive.org/) / [KataGo releases](https://github.com/lightvector/KataGo/releases) | 见各自发布页 |
-| 三段自然音（雨 / 海浪 / 溪流） | archive.org 上标 CC0 1.0 的条目 | CC0 1.0（公有领域） |
+| 东西 | 来源 | 在哪 | 许可 |
+|---|---|---|---|
+| KataGo 引擎（DirectML / Eigen 版） | [lightvector/KataGo](https://github.com/lightvector/KataGo) | `setup.py` 下载 | MIT |
+| 两个神经网络 | [katagotraining.org](https://katagotraining.org/) / [katagoarchive.org](https://katagoarchive.org/) / [KataGo releases](https://github.com/lightvector/KataGo/releases) | `setup.py` 下载 | 见各自发布页 |
+| `configs/gtp_human5k_example.cfg` | 同上，v1.18.1 的 `cpp/configs/` | **随本仓库分发** | MIT，© David J Wu (lightvector) |
+| 三段自然音（雨 / 海浪 / 溪流） | archive.org 上标 CC0 1.0 的条目 | `setup.py` 下载 | CC0 1.0（公有领域） |
+
+> 那份配置是唯一随仓库转发的第三方文件（12KB 文本，MIT）。收进来是因为程序行为
+> 全指着里面的 `humanSLProfile` / `delayMove` / `maxVisits`，而官方把它放在
+> `raw.githubusercontent.com` 上 —— 国内网络经常连不上，为 12KB 的文本赌一条外部
+> URL 不值当。上游版权声明见 [KataGo LICENSE](https://github.com/lightvector/KataGo/blob/master/LICENSE)。
 
 几个目录故意不进仓库，都在 [`.gitignore`](.gitignore) 里：
 

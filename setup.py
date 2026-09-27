@@ -7,8 +7,11 @@
 Windows 下两个引擎：DirectML 走 GPU，Eigen 纯 CPU 作为驱动出问题时的退路。
 选哪个在 katago.py 里，一处切换。
 
-macOS 下不下引擎 —— KataGo 官方从不发 macOS 预编译包，只能 brew install katago。
-这里只下配置文件（brew 的包不带）和两个模型。
+macOS 下只下两个模型 —— KataGo 官方从不发 macOS 预编译包，引擎只能
+brew install katago；配置文件也不用下，它随源码走，在 configs/ 里。
+
+顺序：必需的（模型、Windows 引擎）下完，可选的（内置自然音）垫后。
+可选项下不到只警告，不中断 —— 别让背景音拦住整个安装。
 """
 
 import os
@@ -30,7 +33,6 @@ PROXY = os.environ.get("GO_PROXY", "http://127.0.0.1:7892")
 STALL_SECONDS = 20  # 这么多秒还没下到 1MB 就认为这条线路不通
 
 GH = "https://github.com/lightvector/KataGo/releases/download"
-RAW = "https://raw.githubusercontent.com/lightvector/KataGo"
 
 # (url, 落盘文件名, 精确字节数或 None, vendor 下的子目录)
 
@@ -61,16 +63,14 @@ WINDOWS_DOWNLOADS = [
     ),
 ]
 
-# macOS 不下引擎：KataGo 官方从不发 macOS 预编译包（61 个 release 一个都没有），
-# 只能 brew install katago。但配置文件必须下 —— brew 那个包只给一个二进制，
-# 不带 gtp_human5k_example.cfg，而 humanSLProfile / delayMove 这些关键设置都在里面。
-# 跟 Windows 共用同一份（v1.18.1 的），省得两边设置各自漂移。
-MAC_DOWNLOADS = [
-    (
-        f"{RAW}/v1.18.1/cpp/configs/gtp_human5k_example.cfg",
-        "gtp_human5k_example.cfg", None, "engines/macos",
-    ),
-]
+# macOS 不下引擎，也不下载配置：KataGo 官方从不发 macOS 预编译包
+# （61 个 release 一个都没有），只能 brew install katago。而 brew 那个包只给
+# 一个二进制，不带 gtp_human5k_example.cfg —— 那份现在**随源码走**，在
+# configs/ 里，katago.engine_paths() 会退回去找。
+#
+# 以前它是从 raw.githubusercontent.com 下的，两个问题：那是国内网络经常连不上
+# 的域名；而且它排在 SOUND_DOWNLOADS 后面，自然音一失败就永远轮不到它，
+# 结果模型下完了、程序反而起不来。12KB 的文本没必要承担这些。
 
 # 内置的自然音：三段实录，做背景声垫在棋局底下。
 #
@@ -99,8 +99,16 @@ SOUND_DOWNLOADS = [
 ]
 
 ENGINES = ["macos"] if IS_MAC else ["directml", "eigen"]
-DOWNLOADS = (MODEL_DOWNLOADS + SOUND_DOWNLOADS
-             + (MAC_DOWNLOADS if IS_MAC else WINDOWS_DOWNLOADS))
+
+# 必需的：模型和引擎。缺一个程序都跑不起来，下不到就当场停。
+REQUIRED = MODEL_DOWNLOADS + ([] if IS_MAC else WINDOWS_DOWNLOADS)
+# 可选的：内置自然音，缺了只是没背景声。
+#
+# **排在必需项之后是有意的。** 以前顺序是 模型 → 自然音 → 引擎/配置，
+# archive.org 一慢就是一个 SystemExit 把整个脚本停住，于是前面下成功的
+# 白下、后面必需的反而没轮到。Mac 上尤其致命：那个 cfg 当时排在最后。
+OPTIONAL = SOUND_DOWNLOADS
+
 MODELS = [d[1] for d in MODEL_DOWNLOADS]
 SOUNDS = [d[1] for d in SOUND_DOWNLOADS]
 
@@ -135,7 +143,12 @@ def _fetch(url, dest, via_proxy):
                     print(f"    {pct:3d}%  {got/1e6:6.1f} / {total/1e6:.1f} MB", flush=True)
 
 
-def download(url, name, expect, subdir):
+def download(url, name, expect, subdir, optional=False):
+    """下到 vendor/<subdir>/<name>。
+
+    optional=True 时下不到只warning不中断 —— 用于内置自然音那种缺了不影响
+    下棋的东西。整批安装不该被一个可选项卡死。
+    """
     folder = VENDOR / subdir
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / name
@@ -159,11 +172,15 @@ def download(url, name, expect, subdir):
             print(f"    失败（{route}）：{exc}")
             tmp.unlink(missing_ok=True)
 
+    if optional:
+        print(f"    [跳过] {name} 是可选项，下不到不影响下棋")
+        return None
     raise SystemExit(f"两条线路都没下成：{name}\n请手动下载后放到 {folder}/")
 
 
 def main():
-    for url, name, expect, subdir in DOWNLOADS:
+    # 必需的先下完，可选的放最后 —— 顺序见上面 REQUIRED/OPTIONAL 的注释。
+    for url, name, expect, subdir in REQUIRED:
         path = download(url, name, expect, subdir)
         if path.suffix == ".zip":
             target = path.parent
@@ -173,6 +190,9 @@ def main():
                 print(f"[解压] {name}")
                 with zipfile.ZipFile(path) as zf:
                     zf.extractall(target)
+
+    for url, name, expect, subdir in OPTIONAL:
+        download(url, name, expect, subdir, optional=True)
 
     # 只用 ASCII 标记。Windows 控制台默认 GBK，✓/✗ 这类符号会直接抛
     # UnicodeEncodeError 把脚本搞崩 —— 明明活都干完了。

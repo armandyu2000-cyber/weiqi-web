@@ -79,8 +79,13 @@ python e2e_check.py                          # 真引擎端到端，几十秒，
 
 macOS 那项的可执行文件不在 `vendor/` 里 —— KataGo 官方从不发 macOS 预编译包
 （v1.0~v1.18.2 全部 61 个 release，一个 mac 资源都没有），只能 `brew install katago`，
-所以 `engine_paths()` 会退回 PATH 上找。**配置文件两个平台都必须下**：brew 那个包只给
-一个二进制，不带 `gtp_human5k_example.cfg`，而关键设置全在里面。
+所以 `engine_paths()` 会退回 PATH 上找。**配置文件则随源码走**，在 `configs/` 里
+（Windows 上是解压引擎包带出来的那份优先，Mac 上退回 `configs/`）—— 12KB 的文本，
+带着 `humanSLProfile`、`delayMove`、`maxVisits` 这些决定程序行为的关键设置，
+不值得让它的可得性依赖一条外部 URL。
+
+`setup.py` 只下**必需**的（模型、Windows 引擎）和**可选**的（自然音），两批分开跑，
+可选的排在后面且失败只警告不中断 —— 别让 archive.org 的慢速拦住整个安装。
 
 **整条 Mac 路径至今没在真机上验证过**（`macos/README-macOS.md` 里挂着三个 ⚠️：
 brew 的 katago 走哪个后端、每手多少秒、Gatekeeper 拦不拦）。`macos/首次运行.md` 是给

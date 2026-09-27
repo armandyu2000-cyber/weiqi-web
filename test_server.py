@@ -649,12 +649,18 @@ class TestPlatform(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self._orig = katago.VENDOR
+        self._orig_config_dir = katago.CONFIG_DIR
+        self.real_config_dir = katago.CONFIG_DIR
         katago.VENDOR = Path(self.tmp.name)
+        # 配置有两处可找（vendor 和仓库自带的 configs/），两处都得隔离 ——
+        # 不隔离的话真仓库里那份会兜底，「找不到要报错」那条就永远测不出问题。
+        katago.CONFIG_DIR = Path(self.tmp.name) / "configs"
         self.fake_katago = Path(self.tmp.name) / "katago"
         self.fake_katago.write_text("", encoding="utf-8")
 
     def tearDown(self):
         katago.VENDOR = self._orig
+        katago.CONFIG_DIR = self._orig_config_dir
         self.tmp.cleanup()
 
     def _make_mac_folder(self, with_config=True):
@@ -681,11 +687,46 @@ class TestPlatform(unittest.TestCase):
         self.assertEqual(exe, folder / "katago")
 
     def test_complains_when_the_config_is_missing(self):
-        """配置必须下 —— brew 那个包只给一个二进制，不带 gtp_human5k_example.cfg。"""
+        """两处都没有才报错 —— brew 那个包只给一个二进制，不带 cfg；
+        仓库那份要是也丢了，就真没处拿了。"""
         self._make_mac_folder(with_config=False)
         with mock.patch.object(katago.shutil, "which", return_value=str(self.fake_katago)):
             with self.assertRaises(FileNotFoundError):
                 katago.engine_paths("macos")
+
+    def test_config_falls_back_to_the_copy_shipped_with_the_source(self):
+        """Mac 上没有引擎包，那份 cfg 就不在 vendor 里 —— 得退回 configs/。
+
+        它随源码走，不再靠下载：raw.githubusercontent.com 国内经常连不上，
+        而且它以前排在自然音后面，archive.org 一慢就永远轮不到它。"""
+        self._make_mac_folder(with_config=False)
+        shipped = katago.CONFIG_DIR
+        shipped.mkdir(parents=True, exist_ok=True)
+        (shipped / katago.CONFIG_NAME).write_text("", encoding="utf-8")
+        with mock.patch.object(katago.shutil, "which", return_value=str(self.fake_katago)):
+            _exe, config = katago.engine_paths("macos")
+        self.assertEqual(config, shipped / katago.CONFIG_NAME)
+
+    def test_vendor_config_wins_over_the_shipped_one(self):
+        """Windows 解压引擎包会带出一份同名 cfg，那份跟引擎同版本，优先用。"""
+        folder = self._make_mac_folder()
+        shipped = katago.CONFIG_DIR
+        shipped.mkdir(parents=True, exist_ok=True)
+        (shipped / katago.CONFIG_NAME).write_text("", encoding="utf-8")
+        with mock.patch.object(katago.shutil, "which", return_value=str(self.fake_katago)):
+            _exe, config = katago.engine_paths("macos")
+        self.assertEqual(config, folder / katago.CONFIG_NAME)
+
+    def test_the_shipped_config_is_actually_in_the_repo(self):
+        """上面那条回退只有在仓库里真有这份文件时才有意义。
+
+        注意用的是 real_config_dir 而不是 katago.CONFIG_DIR —— 后者被
+        setUp 指向临时目录了，测的是「有没有这个逻辑」，这条测的是
+        「仓库里到底有没有这个文件」。"""
+        self.assertTrue(
+            (self.real_config_dir / katago.CONFIG_NAME).is_file(),
+            f"{self.real_config_dir / katago.CONFIG_NAME} 不在仓库里 —— "
+            "Mac 上没处拿这份配置")
 
     def test_unknown_engine_raises(self):
         with self.assertRaises(FileNotFoundError):
@@ -722,11 +763,26 @@ class TestPlatform(unittest.TestCase):
         self.assertEqual(katago.ENGINES["macos"]["overrides"], {})
         self.assertEqual(katago.ENGINES["directml"]["exe"], "katago.exe")
 
-    def test_setup_skips_the_engine_on_mac(self):
-        """KataGo 官方不发 macOS 预编译包，Mac 上只能 brew 装，所以不下引擎包。"""
-        self.assertEqual([d[3] for d in setup.MAC_DOWNLOADS], ["engines/macos"])
-        self.assertTrue(setup.MAC_DOWNLOADS[0][0].endswith(katago.CONFIG_NAME))
-        self.assertIsNone(setup.MAC_DOWNLOADS[0][2], "配置文件的字节数没法预先钉死")
+    def test_setup_never_downloads_a_macos_engine(self):
+        """KataGo 官方不发 macOS 预编译包，Mac 上只能 brew 装，所以不下引擎包。
+        配置也不再下载 —— 它随源码走，在 configs/ 里。"""
+        subdirs = [d[3] for d in setup.REQUIRED + setup.OPTIONAL]
+        self.assertNotIn("engines/macos", subdirs)
+        self.assertFalse(hasattr(setup, "MAC_DOWNLOADS"),
+                         "配置改成随源码发之后，不该再有 macOS 的下载项")
+        self.assertEqual([d[3] for d in setup.WINDOWS_DOWNLOADS],
+                         ["engines/directml", "engines/eigen"])
+
+    def test_sounds_are_optional_and_in_their_own_batch(self):
+        """自然音缺了只是没背景声，不该拦住安装。
+
+        这是防回归：以前必需的和可选的混在一个 DOWNLOADS 里按顺序下，
+        archive.org 一慢就是一个 SystemExit 把整个脚本停住 —— 前面下成功的
+        白下，排在后面的必需项反而没轮到。Mac 上那个 cfg 就是这么丢的。
+        现在两批分开，必需的先跑完。"""
+        self.assertEqual(set(setup.SOUNDS), {d[1] for d in setup.OPTIONAL})
+        self.assertFalse(set(setup.SOUNDS) & {d[1] for d in setup.REQUIRED},
+                         "自然音不能混进必需项")
 
     def test_setup_downloads_the_two_engines_on_windows(self):
         self.assertEqual([d[3] for d in setup.WINDOWS_DOWNLOADS],
@@ -1446,7 +1502,7 @@ class TestSoundDownloads(unittest.TestCase):
 
     def test_they_ride_along_on_both_platforms(self):
         """自然音不是平台相关的 —— Windows 和 Mac 都要有。"""
-        self.assertTrue(set(setup.SOUNDS) <= {d[1] for d in setup.DOWNLOADS})
+        self.assertTrue(set(setup.SOUNDS) <= {d[1] for d in setup.OPTIONAL})
 
 
 class TestAudioPage(unittest.TestCase):
