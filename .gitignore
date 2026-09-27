@@ -1,0 +1,30 @@
+# 引擎、模型、内置自然音：setup.py 从官方地址下载（约 170MB），不随仓库分发
+vendor/
+
+# 运行时从 vendor/sounds/ 铺出来的副本，用户可随手删改
+nature/
+
+# 两本第三方定式辞典 SGF（石田芳夫 / Kogo's），版权不在本项目
+joseki/
+
+# 打包产物（约 250MB，可重新生成）
+build/
+dist/
+
+# 运行产物：棋谱存档、对弈记录、引擎日志
+games/
+gtp_logs/
+
+# 内部设计稿
+docs/superpowers/
+
+# Python
+__pycache__/
+*.py[cod]
+*.part
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

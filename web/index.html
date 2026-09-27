@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>围棋 · 人机对局 / 双机对局</title>
+<style>
+  :root {
+    --bg: #1c1b19;
+    --panel: #262421;
+    --panel-2: #302d29;
+    --line: #3d3934;
+    --ink: #ece7df;
+    --ink-dim: #9a938a;
+    --accent: #d9a441;
+    --accent-ink: #2a2113;
+    --danger: #c4574a;
+  }
+
+  * { box-sizing: border-box; }
+
+  /* 必须放最前面、带 !important：下面 .levels / .row 那些类都显式设了 display，
+     而类选择器会盖掉 [hidden] 自带的 display:none —— 于是 el.hidden = true
+     一点效果都没有。这个坑不会报错，只会让该藏的按钮继续杵在那儿。 */
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 整页锁一屏：只有各栏内部的列表滚动，页面本身永远不出滚动条。 */
+  .app {
+    height: 100vh;
+    padding: 12px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 三栏：左“读” / 棋盘 / 右“写”。
+     中间列用 minmax(0,1fr)，窄窗口下只会让棋盘变小，不会撑破页面。 */
+  main {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: var(--col) minmax(0, 1fr) var(--col);
+    gap: 16px;
+    align-items: stretch;
+    --col: clamp(210px, 15vw, 290px);
+  }
+
+  .board-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .board-wrap {
+    position: relative;
+    /* 高度吃掉播放条以外的全部空间，宽度由 aspect-ratio 反推。
+       列窄到压住 max-width 时容器会变扁，但 board.js 按 min(w,h) 排版，
+       棋子只会在里面对称留白，不会变形。 */
+    flex: 1 1 auto;
+    min-height: 0;
+    aspect-ratio: 1 / 1;
+    max-width: 100%;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  }
+
+  canvas { display: block; width: 100%; height: 100%; }
+
+  .busy {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 11px;
+    background: rgba(38, 36, 33, 0.92);
+    border: 1px solid rgba(217, 164, 65, 0.7);
+    border-radius: 7px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    pointer-events: none;
+  }
+
+  .busy.on { display: flex; }
+
+  .spinner {
+    width: 15px; height: 15px;
+    margin-right: 10px;
+    border: 2px solid rgba(255,255,255,0.25);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  aside {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    overflow-y: auto;   /* 极端小屏兜底，常规尺寸用不到 */
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+  }
+
+  /* 带 .grow 的卡是弹性卡：吃掉本栏剩余高度，里面的列表自己滚。
+     认输提议 / 结果横幅这类动态展开，只会压缩它，不会顶出页面滚动条。 */
+  .card.grow { flex: 1 1 auto; min-height: 0; }
+  .card.grow .save-list { flex: 1 1 auto; min-height: 0; max-height: none; }
+
+  .card h2 {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin: 0 0 10px;
+  }
+
+  .card h2 .sub { font-weight: 400; letter-spacing: 0.04em; }
+
+  .hist {
+    padding: 7px 9px;
+    background: var(--panel-2);
+    border-radius: 6px;
+    font-size: 12.5px;
+  }
+
+  .hist + .hist { margin-top: 5px; }
+  .hist-top { display: flex; justify-content: space-between; gap: 8px; }
+  .hist-sub { color: var(--ink-dim); font-size: 11px; margin-top: 3px; }
+  .hist .win { color: #7fd1a3; }
+  .hist .lose { color: #e88b7f; }
+
+  .levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+
+  /* 档位有 18 个（9 级 + 9 段），按钮墙太占地方，用原生下拉。
+     浏览器自带的弹出列表也比自绘的可靠。 */
+  .rows select {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-left: 10px;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ink);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    cursor: pointer;
+  }
+
+  .rows select:hover { border-color: #555049; }
+
+  /* 人机模式里人自己那一方：人没有档位，占位写上「你」，一眼看出这行不用管。
+     跟下拉同样的盒子尺寸，两行才对得齐。 */
+  .row .you {
+    flex: 1 1 auto;
+    margin-left: 10px;
+    padding: 6px 8px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--ink-dim);
+    border: 1px dashed var(--line);
+    border-radius: 7px;
+  }
+
+  /* 机机模式的局面卡：黑白各一行，正在走的那方高亮 */
+  .row .side {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .row .side.on { color: var(--accent); font-weight: 600; }
+  .row .side .rank { color: var(--ink-dim); font-weight: 400; font-size: 12.5px; }
+  .row .side.on .rank { color: var(--accent); opacity: 0.8; }
+  .row .side .arrow { margin-left: auto; font-size: 12px; }
+
+  /* 胜率曲线贴在复盘条下面，跟棋盘同宽 —— 复盘时视线不用跑去侧栏。
+     只当「走势示意」用，所以压扁到 38px：这里每让出一分高度，棋盘就多一分。 */
+  .curve-wrap {
+    flex: 0 0 auto;
+    width: 100%;
+    height: 38px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    background: var(--panel);
+  }
+
+  .curve-wrap canvas { width: 100%; height: 100%; cursor: pointer; }
+  .levels.two { grid-template-columns: repeat(2, 1fr); }
+  .levels + .levels { margin-top: 6px; }
+
+  .proposal {
+    display: none;
+    margin-top: 10px;
+    padding: 11px 13px;
+    border-radius: 8px;
+    background: #253330;
+    border: 1px solid #4e8f74;
+    font-size: 13.5px;
+    text-align: center;
+  }
+
+  .proposal.on { display: block; }
+
+  .proposal-btns { display: flex; gap: 8px; margin-top: 9px; }
+  .proposal-btns button { flex: 1; text-align: center; }
+
+  .levels button {
+    flex: 1;
+    padding: 7px 0;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--ink-dim);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+
+  .levels button:hover { border-color: #555049; color: var(--ink); }
+
+  .levels button.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+
+  .rows { display: flex; flex-direction: column; gap: 7px; font-size: 13.5px; }
+
+  .row { display: flex; justify-content: space-between; align-items: center; }
+  .row .k { color: var(--ink-dim); }
+  .row .v { font-variant-numeric: tabular-nums; }
+
+  .row input[type="range"] { flex: 1; min-width: 0; max-width: 120px; margin-left: 10px; accent-color: var(--accent); }
+
+  .dot {
+    display: inline-block;
+    width: 11px; height: 11px;
+    border-radius: 50%;
+    margin-right: 7px;
+    vertical-align: -1px;
+    border: 1px solid #000;
+  }
+  .dot.b { background: #111; }
+  .dot.w { background: #f4f1ea; border-color: #b9b2a6; }
+
+  .buttons { display: flex; flex-direction: column; gap: 7px; }
+
+  button.act {
+    padding: 9px 12px;
+    font-size: 13.5px;
+    font-family: inherit;
+    color: var(--ink);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.12s, border-color 0.12s;
+  }
+
+  button.act:hover:not(:disabled) { background: #38342f; border-color: #555049; }
+  button.act:disabled { opacity: 0.38; cursor: default; }
+
+  /* 当前模式下最该点的那个按钮。机机模式里就是「开始/继续对弈」。 */
+  button.act.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+  }
+
+  button.act.primary:hover:not(:disabled) { background: #e5b356; border-color: #e5b356; }
+  button.act.primary .hint { color: var(--accent-ink); opacity: 0.75; }
+  button.act.danger:hover:not(:disabled) { border-color: var(--danger); color: #e88b7f; }
+  button.act .hint { color: var(--ink-dim); font-size: 11.5px; margin-left: 6px; }
+
+  .replay { display: flex; gap: 5px; }
+
+  .replay button {
+    flex: 1;
+    padding: 7px 0;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--ink);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    cursor: pointer;
+  }
+
+  .replay button:hover:not(:disabled) { background: #38342f; }
+  .replay button:disabled { opacity: 0.3; cursor: default; }
+
+  .plies {
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    margin-top: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .plies b { color: var(--ink); font-weight: 600; }
+
+  /* 复盘条贴在棋盘正下方：视线不用来回跑侧栏。 */
+  .replay-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    padding: 6px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    white-space: nowrap;
+  }
+
+  .replay-bar #review-hint { margin-left: auto; }
+
+  .replay-bar .replay button { flex: 0 0 auto; width: 40px; padding: 5px 0; }
+  .replay-bar .plies { margin-top: 0; }
+
+  .save-list { display: flex; flex-direction: column; gap: 5px; max-height: 210px; overflow-y: auto; }
+
+  .save-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 9px;
+    font-size: 12.5px;
+    background: var(--panel-2);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .save-item:hover { border-color: #555049; }
+  .save-item .meta { color: var(--ink-dim); font-size: 11.5px; white-space: nowrap; }
+  .save-item .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .empty { color: var(--ink-dim); font-size: 12.5px; }
+
+  .quit-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    color: var(--ink-dim);
+    font-size: 15px;
+  }
+
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%) translateY(14px);
+    padding: 10px 18px;
+    background: #3a2f22;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    font-size: 13.5px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    max-width: 80vw;
+  }
+
+  #toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.err { border-color: var(--danger); background: #3a2422; }
+
+  .result-banner {
+    display: none;
+    padding: 11px 13px;
+    border-radius: 8px;
+    background: #33301f;
+    border: 1px solid var(--accent);
+    font-size: 14px;
+    text-align: center;
+  }
+
+  .result-banner.on { display: block; }
+  .result-banner b { color: var(--accent); font-size: 16px; }
+
+  .banner-detail {
+    display: block;
+    margin-top: 5px;
+    font-size: 12px;
+    color: var(--ink-dim);
+  }
+
+  /* 窄窗口塞不下三栏，退回上下堆叠 + 页面滚动。这是物理限制，不是缺陷。 */
+  @media (max-width: 1220px) {
+    .app { height: auto; overflow: visible; padding: 16px 18px 28px; }
+    main { grid-template-columns: minmax(0, 1fr); }
+    .board-col { order: -1; }
+    .board-wrap {
+      flex: 0 0 auto;
+      width: min(100%, calc(100vh - 240px));
+      max-width: none;
+    }
+    .curve-wrap, .replay-bar { width: min(100%, calc(100vh - 240px)); max-width: none; }
+    aside { overflow-y: visible; }
+    .card.grow { flex: 0 0 auto; }
+    .card.grow .save-list { flex: 0 0 auto; max-height: 210px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <main>
+    <aside>
+      <div class="card">
+        <h2>对局设置</h2>
+        <div class="levels two" id="modes"></div>
+        <div class="levels two" id="colors"></div>
+        <div class="rows">
+          <div class="row">
+            <span class="k" id="label-black">黑</span>
+            <select id="level-black"></select>
+            <span class="you" id="you-black" hidden>你</span>
+          </div>
+          <div class="row">
+            <span class="k" id="label-white">白</span>
+            <select id="level-white"></select>
+            <span class="you" id="you-white" hidden>你</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>局面</h2>
+        <div class="rows">
+          <div class="row" id="row-my-color">
+            <span class="k">我执</span>
+            <span class="v" id="my-color">—</span>
+          </div>
+          <div class="row" id="row-turn">
+            <span class="k">轮到</span>
+            <span class="v" id="turn">—</span>
+          </div>
+          <div class="row" id="row-side-black" hidden>
+            <span class="v side" id="side-black">—</span>
+          </div>
+          <div class="row" id="row-side-white" hidden>
+            <span class="v side" id="side-white">—</span>
+          </div>
+          <div class="row">
+            <span class="k">提子</span>
+            <span class="v" id="captures">—</span>
+          </div>
+          <div class="row">
+            <span class="k">形势</span>
+            <span class="v" id="eval">—</span>
+          </div>
+        </div>
+        <div class="result-banner" id="result"></div>
+        <div class="proposal" id="proposal">
+          <div>电脑认为自己输了。</div>
+          <div class="proposal-btns">
+            <button class="act" id="accept-resign">接受认输</button>
+            <button class="act" id="decline-resign">继续下</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>背景音<span class="sub" id="audio-now">没在放</span></h2>
+        <div class="rows">
+          <div class="row">
+            <label class="k" for="nature-pick">自然音</label>
+            <select id="nature-pick"></select>
+          </div>
+          <div class="row">
+            <span class="k">音量</span>
+            <input type="range" id="nature-vol" min="0" max="100" value="45">
+          </div>
+        </div>
+      </div>
+
+      <div class="card grow">
+        <h2>对弈记录<span class="sub" id="history-total">共 0 盘</span></h2>
+        <div class="save-list" id="history"><div class="empty">还没有下过</div></div>
+      </div>
+    </aside>
+
+    <div class="board-col">
+      <div class="board-wrap">
+        <canvas id="board"></canvas>
+        <div class="busy" id="busy"><span class="spinner"></span><span id="busy-text">让俺想想</span></div>
+      </div>
+
+      <div class="replay-bar">
+        <div class="replay">
+          <button id="to-start" title="回到开局">⏮</button>
+          <button id="prev" title="上一手">◀</button>
+          <button id="next" title="下一手；双机对局里走到当前局面后，点它就是让机器再落一子">▶</button>
+          <button id="to-end" title="回到当前">⏭</button>
+        </div>
+        <div class="plies">第 <b id="ply-now">0</b> / <span id="ply-max">0</span> 手</div>
+        <button class="act" id="review-hint" title="问引擎：这个局面它想下哪">高手同志，给个提示吧</button>
+        <button class="act" id="play-from" title="把这一手之后的棋丢掉，从这里接着当实战下">从这手接着下</button>
+      </div>
+
+      <div class="curve-wrap">
+        <canvas id="curve"></canvas>
+      </div>
+    </div>
+
+    <aside>
+      <div class="card">
+        <h2 id="ops-title">操作</h2>
+        <div class="buttons">
+          <button class="act primary" id="machine"><span id="machine-label">开始对弈</span><span class="hint" id="machine-hint">黑白自己下起来</span></button>
+          <button class="act" id="undo">悔棋</button>
+          <button class="act" id="pass">停一手</button>
+          <button class="act" id="hint">提示<span class="hint">让一级选手支一招</span></button>
+          <button class="act" id="takeover"><span id="takeover-label">接管</span><span class="hint" id="takeover-hint">让机器替你走几步</span></button>
+          <div class="levels two" id="takeover-count"></div>
+          <button class="act" id="territory">显示地盘</button>
+          <button class="act" id="save">保存棋谱</button>
+          <button class="act danger" id="resign">认输</button>
+          <button class="act" id="new">开新局</button>
+          <button class="act danger" id="quit">退出程序<span class="hint">关掉后台服务</span></button>
+        </div>
+      </div>
+
+      <div class="card grow">
+        <h2>棋谱</h2>
+        <div class="save-list" id="saves"><div class="empty">还没有保存过</div></div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script src="/web/board.js"></script>
+<script src="/web/app.js"></script>
+<script src="/web/audio.js"></script>
+</body>
+</html>

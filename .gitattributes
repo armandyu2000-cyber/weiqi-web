@@ -1,0 +1,5 @@
+# Windows 上 git 看不见可执行位，macOS 脚本一旦被写成 CRLF 就是
+# "bad interpreter: /bin/bash^M"，所以这两个钉死 LF。
+# 可执行位在索引里（见 git ls-files -s，应为 100755）。
+macos/Go text eol=lf
+macos/install_macos.command text eol=lf

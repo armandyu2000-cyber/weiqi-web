@@ -1,0 +1,49 @@
+#!/bin/bash
+# .app 的启动器。install_macos.command 会把它拷成 围棋.app/Contents/MacOS/Go。
+#
+# 它干四件事：补 PATH、找 python3、找 katago、把工作目录挪到可写的地方。
+
+set -u
+
+HERE="$(cd "$(dirname "$0")/../Resources/app" && pwd)"
+
+# 从 Finder 双击启动时 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，
+# brew 装的 python3 和 katago 都不在里面 —— 不补上就会「找不到引擎」。
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+PY=""
+for c in /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+  [ -x "$c" ] && PY="$c" && break
+done
+[ -n "$PY" ] || PY="$(command -v python3 || true)"
+if [ -z "$PY" ]; then
+  osascript -e 'display alert "缺少 python3" message "在终端里跑一句：brew install python"'
+  exit 1
+fi
+
+if ! command -v katago >/dev/null 2>&1; then
+  osascript -e 'display alert "缺少 katago 引擎" message "在终端里跑一句：brew install katago"'
+  exit 1
+fi
+
+# 存档和对弈记录写到 bundle 外面：那里可能是只读的，而且没签名的包会被
+# Gatekeeper 挂到随机只读路径上，写进去的棋谱会莫名其妙不见。
+# 已经在跑就直接把浏览器叫出来。双击两次不该弹一句「地址已被占用」——
+# 打包成 .app 之后没有终端，弹了也没人看得见。
+if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:8731/api/state"; then
+  open "http://127.0.0.1:8731/"
+  exit 0
+fi
+
+DATA="$HOME/Library/Application Support/Go"
+mkdir -p "$DATA"
+
+export GO_DATA_DIR="$DATA"
+cd "$DATA"
+
+# 双击启动没有终端，出错总得有个地方看。在终端里手跑的话保留实时输出。
+if [ -t 1 ]; then
+  exec "$PY" "$HERE/server.py"
+else
+  exec "$PY" "$HERE/server.py" >> "$DATA/启动日志.txt" 2>&1
+fi
